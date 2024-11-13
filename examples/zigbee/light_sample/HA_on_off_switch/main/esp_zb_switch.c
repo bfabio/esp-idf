@@ -15,10 +15,20 @@
 #include "string.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "driver/uart.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "ha/esp_zigbee_ha_standard.h"
 #include "esp_zb_switch.h"
+#include "blink_led.h"
+
+#include "zcl/esp_zigbee_zcl_common.h"
+#include "zcl/esp_zigbee_zcl_basic.h"
+#include "zcl/esp_zigbee_zcl_occupancy_sensing.h"
+#include "esp_zigbee_cluster.h"
+
+#define OCCUPANCY_SENSOR_ENDPOINT 1
+#define ESP_ZB_HA_OCCUPANCY_SENSOR_DEVICE_ID 0x0107
 
 #if defined ZB_ED_ROLE
 #error Define ZB_COORDINATOR_ROLE in idf.py menuconfig to compile light switch source code.
@@ -29,22 +39,51 @@ typedef struct light_bulb_device_params_s {
     uint16_t short_addr;
 } light_bulb_device_params_t;
 
-static switch_func_pair_t button_func_pair[] = {
-    {GPIO_INPUT_IO_TOGGLE_SWITCH, SWITCH_ONOFF_TOGGLE_CONTROL}
-};
+char manufname[] = {9, 'E', 's', 'p', 'r', 'e', 's', 's', 'i', 'f'};
+char modelid[] = {14, 'E', 'S', 'P', '3', '2', 'H', '2', '.', 'S', 'e', 'n', 's', 'o', 'r'};
 
-static const char *TAG = "ESP_ZB_ON_OFF_SWITCH";
+static const char *TAG = "ESP_ZB_OCCUPANCY_SWITCH";
 
-static void esp_zb_buttons_handler(switch_func_pair_t *button_func_pair)
+static TaskHandle_t blink_led_task_handle = NULL;
+
+uint8_t occupancy_state = false;
+
+static void esp_zb_ld2410_handler(bool *ld2410_output_state)
 {
-    if (button_func_pair->func == SWITCH_ONOFF_TOGGLE_CONTROL) {
-        /* implemented light switch toggle functionality */
-        esp_zb_zcl_on_off_cmd_t cmd_req;
-        cmd_req.zcl_basic_cmd.src_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
-        cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT;
-        cmd_req.on_off_cmd_id = ESP_ZB_ZCL_CMD_ON_OFF_TOGGLE_ID;
-        ESP_EARLY_LOGI(TAG, "Send 'on_off toggle' command");
-        esp_zb_zcl_on_off_cmd_req(&cmd_req);
+    ESP_LOGI(TAG, "Sending presence status: %s", *ld2410_output_state ? "occupied" : "unoccupied");
+
+    occupancy_state = (uint8_t) *ld2410_output_state;
+
+    esp_zb_zcl_status_t state = esp_zb_zcl_set_attribute_val(
+        OCCUPANCY_SENSOR_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_OCCUPANCY_SENSING,
+        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_OCCUPANCY_SENSING_OCCUPANCY_ID,
+        &occupancy_state,
+        false
+    );
+
+    if (state != ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGE(TAG, "Updating occupancy attribute failed");
+    }
+
+    static esp_zb_zcl_report_attr_cmd_t occupancy_cmd_req = {
+        .zcl_basic_cmd.src_endpoint = OCCUPANCY_SENSOR_ENDPOINT,
+        .address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT,
+        .clusterID = ESP_ZB_ZCL_CLUSTER_ID_OCCUPANCY_SENSING,
+        .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        .attributeID = ESP_ZB_ZCL_ATTR_OCCUPANCY_SENSING_OCCUPANCY_ID,
+    };
+    state = esp_zb_zcl_report_attr_cmd_req(&occupancy_cmd_req);
+
+    if (state != ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGE(TAG, "Reporting occupancy attribute failed");
+    }
+
+    if (*ld2410_output_state) {
+        status_led_on();
+    } else {
+        status_led_off();
     }
 }
 
@@ -68,7 +107,13 @@ static void bind_cb(esp_zb_zdp_status_t zdo_status, void *user_ctx)
 static void user_find_cb(esp_zb_zdp_status_t zdo_status, uint16_t addr, uint8_t endpoint, void *user_ctx)
 {
     if (zdo_status == ESP_ZB_ZDP_STATUS_SUCCESS) {
-        ESP_LOGI(TAG, "Found light");
+        if (blink_led_task_handle != NULL) {
+            vTaskDelete(blink_led_task_handle);
+            blink_led_task_handle = NULL;
+
+            status_led_off();
+        }
+        ESP_LOGI(TAG, "Found traffic light");
         esp_zb_zdo_bind_req_param_t bind_req;
         light_bulb_device_params_t *light = (light_bulb_device_params_t *)malloc(sizeof(light_bulb_device_params_t));
         light->endpoint = endpoint;
@@ -76,12 +121,12 @@ static void user_find_cb(esp_zb_zdp_status_t zdo_status, uint16_t addr, uint8_t 
         esp_zb_ieee_address_by_short(light->short_addr, light->ieee_addr);
         esp_zb_get_long_address(bind_req.src_address);
         bind_req.src_endp = HA_ONOFF_SWITCH_ENDPOINT;
-        bind_req.cluster_id = ESP_ZB_ZCL_CLUSTER_ID_ON_OFF;
+        bind_req.cluster_id = ESP_ZB_ZCL_CLUSTER_ID_OCCUPANCY_SENSING;
         bind_req.dst_addr_mode = ESP_ZB_ZDO_BIND_DST_ADDR_MODE_64_BIT_EXTENDED;
         memcpy(bind_req.dst_address_u.addr_long, light->ieee_addr, sizeof(esp_zb_ieee_addr_t));
         bind_req.dst_endp = endpoint;
         bind_req.req_dst_addr = esp_zb_get_short_address();
-        ESP_LOGI(TAG, "Try to bind On/Off");
+        ESP_LOGI(TAG, "Try to bind occupancy sensing");
         esp_zb_zdo_device_bind_req(&bind_req, bind_cb, (void *)light);
     }
 }
@@ -133,10 +178,19 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     case ESP_ZB_ZDO_SIGNAL_DEVICE_ANNCE:
         dev_annce_params = (esp_zb_zdo_signal_device_annce_params_t *)esp_zb_app_signal_get_params(p_sg_p);
         ESP_LOGI(TAG, "New device commissioned or rejoined (short: 0x%04hx)", dev_annce_params->device_short_addr);
-        esp_zb_zdo_match_desc_req_param_t  cmd_req;
-        cmd_req.dst_nwk_addr = dev_annce_params->device_short_addr;
-        cmd_req.addr_of_interest = dev_annce_params->device_short_addr;
-        esp_zb_zdo_find_on_off_light(&cmd_req, user_find_cb, NULL);
+
+        uint16_t cluster_list[] = {ESP_ZB_ZCL_CLUSTER_ID_OCCUPANCY_SENSING, ESP_ZB_ZCL_CLUSTER_ID_OCCUPANCY_SENSING};
+        esp_zb_zdo_match_desc_req_param_t occupancy_sensing_req = {
+            .dst_nwk_addr = dev_annce_params->device_short_addr,
+            .addr_of_interest = dev_annce_params->device_short_addr,
+            .profile_id = ESP_ZB_AF_HA_PROFILE_ID,
+            .num_in_clusters = 1,
+            .num_out_clusters = 1,
+            .cluster_list = cluster_list,
+        };
+
+        esp_zb_zdo_match_cluster(&occupancy_sensing_req, user_find_cb, NULL);
+
         break;
     case ESP_ZB_NWK_SIGNAL_PERMIT_JOIN_STATUS:
         if (err_status == ESP_OK) {
@@ -159,11 +213,27 @@ static void esp_zb_task(void *pvParameters)
     /* initialize Zigbee stack */
     esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZC_CONFIG();
     esp_zb_init(&zb_nwk_cfg);
-    esp_zb_on_off_switch_cfg_t switch_cfg = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
-    esp_zb_ep_list_t *esp_zb_on_off_switch_ep = esp_zb_on_off_switch_ep_create(HA_ONOFF_SWITCH_ENDPOINT, &switch_cfg);
-    esp_zb_device_register(esp_zb_on_off_switch_ep);
+
+    esp_zb_attribute_list_t *esp_zb_basic_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_BASIC);
+    esp_zb_basic_cluster_add_attr(esp_zb_basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, &manufname[0]);
+    esp_zb_basic_cluster_add_attr(esp_zb_basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, &modelid[0]);
+
+    esp_zb_attribute_list_t *esp_zb_occupancy_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_OCCUPANCY_SENSING);
+    esp_zb_occupancy_sensing_cluster_add_attr(esp_zb_occupancy_cluster, ESP_ZB_ZCL_ATTR_OCCUPANCY_SENSING_OCCUPANCY_ID, &occupancy_state);
+
+    esp_zb_cluster_list_t *esp_zb_cluster_list = esp_zb_zcl_cluster_list_create();
+    esp_zb_cluster_list_add_basic_cluster(esp_zb_cluster_list, esp_zb_basic_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+    esp_zb_cluster_list_add_occupancy_sensing_cluster(esp_zb_cluster_list, esp_zb_occupancy_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+    esp_zb_ep_list_t *esp_zb_ep_list = esp_zb_ep_list_create();
+    esp_zb_ep_list_add_ep(esp_zb_ep_list, esp_zb_cluster_list, OCCUPANCY_SENSOR_ENDPOINT, ESP_ZB_AF_HA_PROFILE_ID, ESP_ZB_HA_OCCUPANCY_SENSOR_DEVICE_ID);
+
+    esp_zb_device_register(esp_zb_ep_list);
+
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
     ESP_ERROR_CHECK(esp_zb_start(false));
+
+    switch_driver_init(esp_zb_ld2410_handler);
     esp_zb_main_loop_iteration();
 }
 
@@ -175,6 +245,7 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
-    switch_driver_init(button_func_pair, PAIR_SIZE(button_func_pair), esp_zb_buttons_handler);
+
+    xTaskCreate(blink_led_init, "blink_led_task", 4096, NULL, tskIDLE_PRIORITY, &blink_led_task_handle);
     xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
 }

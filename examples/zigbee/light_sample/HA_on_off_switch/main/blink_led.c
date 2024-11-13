@@ -36,39 +36,41 @@
  */
 
 #include "esp_log.h"
-#include "light_driver.h"
-
-#include "driver/gpio.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "driver/gpio.h"
 
-#define TRAFFIC_LIGHT_RED_GPIO GPIO_NUM_1
-#define TRAFFIC_LIGHT_YELLOW_GPIO GPIO_NUM_4
-#define TRAFFIC_LIGHT_GREEN_GPIO GPIO_NUM_13
+#define STATUS_LED_GPIO GPIO_NUM_4
 
-void light_driver_set_free(bool free)
+void blink_led_init()
 {
-    gpio_set_level(TRAFFIC_LIGHT_RED_GPIO, !free);
-    gpio_set_level(TRAFFIC_LIGHT_YELLOW_GPIO, 0);
-    gpio_set_level(TRAFFIC_LIGHT_GREEN_GPIO, free);
-}
+    const int delay_ms = 500;
 
-void light_driver_reset()
-{
-    gpio_set_level(TRAFFIC_LIGHT_RED_GPIO, 0);
-    gpio_set_level(TRAFFIC_LIGHT_YELLOW_GPIO, 1);
-    gpio_set_level(TRAFFIC_LIGHT_GREEN_GPIO, 0);
-}
-
-void light_driver_init()
-{
     gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << TRAFFIC_LIGHT_RED_GPIO) | (1ULL << TRAFFIC_LIGHT_GREEN_GPIO) | (1ULL << TRAFFIC_LIGHT_YELLOW_GPIO),
+        .pin_bit_mask = (1ULL << STATUS_LED_GPIO),
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE
     };
     gpio_config(&io_conf);
+
+    while(1) {
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        gpio_set_level(STATUS_LED_GPIO, 0);
+
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        gpio_set_level(STATUS_LED_GPIO, 1);
+    }
+}
+
+void status_led_off()
+{
+    gpio_set_level(STATUS_LED_GPIO, 0);
+}
+
+void status_led_on()
+{
+    gpio_set_level(STATUS_LED_GPIO, 1);
 }

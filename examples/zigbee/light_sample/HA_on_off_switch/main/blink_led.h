@@ -35,40 +35,17 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "esp_log.h"
-#include "light_driver.h"
+#pragma once
 
-#include "driver/gpio.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+void blink_led_init();
 
-#define TRAFFIC_LIGHT_RED_GPIO GPIO_NUM_1
-#define TRAFFIC_LIGHT_YELLOW_GPIO GPIO_NUM_4
-#define TRAFFIC_LIGHT_GREEN_GPIO GPIO_NUM_13
+void status_led_off();
+void status_led_on();
 
-void light_driver_set_free(bool free)
-{
-    gpio_set_level(TRAFFIC_LIGHT_RED_GPIO, !free);
-    gpio_set_level(TRAFFIC_LIGHT_YELLOW_GPIO, 0);
-    gpio_set_level(TRAFFIC_LIGHT_GREEN_GPIO, free);
-}
-
-void light_driver_reset()
-{
-    gpio_set_level(TRAFFIC_LIGHT_RED_GPIO, 0);
-    gpio_set_level(TRAFFIC_LIGHT_YELLOW_GPIO, 1);
-    gpio_set_level(TRAFFIC_LIGHT_GREEN_GPIO, 0);
-}
-
-void light_driver_init()
-{
-    gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << TRAFFIC_LIGHT_RED_GPIO) | (1ULL << TRAFFIC_LIGHT_GREEN_GPIO) | (1ULL << TRAFFIC_LIGHT_YELLOW_GPIO),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE
-    };
-    gpio_config(&io_conf);
-}
+#ifdef __cplusplus
+} // extern "C"
+#endif
