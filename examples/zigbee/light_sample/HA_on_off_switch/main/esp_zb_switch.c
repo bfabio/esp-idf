@@ -69,7 +69,7 @@ static void esp_zb_ld2410_handler(bool *ld2410_output_state)
         .zcl_basic_cmd.src_endpoint = OCCUPANCY_SENSOR_ENDPOINT,
         .address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT,
         .clusterID = ESP_ZB_ZCL_CLUSTER_ID_OCCUPANCY_SENSING,
-        .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        .direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_CLI,
         .attributeID = ESP_ZB_ZCL_ATTR_OCCUPANCY_SENSING_OCCUPANCY_ID,
     };
     state = esp_zb_zcl_report_attr_cmd_req(&occupancy_cmd_req);
@@ -218,7 +218,12 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_cluster_list_add_occupancy_sensing_cluster(esp_zb_cluster_list, esp_zb_occupancy_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
     esp_zb_ep_list_t *esp_zb_ep_list = esp_zb_ep_list_create();
-    esp_zb_ep_list_add_ep(esp_zb_ep_list, esp_zb_cluster_list, OCCUPANCY_SENSOR_ENDPOINT, ESP_ZB_AF_HA_PROFILE_ID, ESP_ZB_HA_OCCUPANCY_SENSOR_DEVICE_ID);
+    esp_zb_endpoint_config_t endpoint_config = {
+        .endpoint = OCCUPANCY_SENSOR_ENDPOINT,
+        .app_profile_id = ESP_ZB_AF_HA_PROFILE_ID,
+        .app_device_id = ESP_ZB_HA_OCCUPANCY_SENSOR_DEVICE_ID,
+    };
+    esp_zb_ep_list_add_ep(esp_zb_ep_list, esp_zb_cluster_list, endpoint_config);
 
     esp_zb_device_register(esp_zb_ep_list);
 
@@ -226,7 +231,7 @@ static void esp_zb_task(void *pvParameters)
     ESP_ERROR_CHECK(esp_zb_start(false));
 
     switch_driver_init(esp_zb_ld2410_handler);
-    esp_zb_main_loop_iteration();
+    esp_zb_stack_main_loop();
 }
 
 void app_main(void)
