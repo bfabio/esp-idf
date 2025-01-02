@@ -20,7 +20,7 @@
 #include "nvs_flash.h"
 #include "ha/esp_zigbee_ha_standard.h"
 #include "esp_zb_switch.h"
-#include "blink_led.h"
+#include "status_led.h"
 
 #include "zcl/esp_zigbee_zcl_common.h"
 #include "zcl/esp_zigbee_zcl_basic.h"
@@ -43,8 +43,6 @@ char manufname[] = {9, 'E', 's', 'p', 'r', 'e', 's', 's', 'i', 'f'};
 char modelid[] = {14, 'E', 'S', 'P', '3', '2', 'H', '2', '.', 'S', 'e', 'n', 's', 'o', 'r'};
 
 static const char *TAG = "ESP_ZB_OCCUPANCY_SWITCH";
-
-static TaskHandle_t blink_led_task_handle = NULL;
 
 uint8_t occupancy_state = false;
 
@@ -107,12 +105,6 @@ static void bind_cb(esp_zb_zdp_status_t zdo_status, void *user_ctx)
 static void user_find_cb(esp_zb_zdp_status_t zdo_status, uint16_t addr, uint8_t endpoint, void *user_ctx)
 {
     if (zdo_status == ESP_ZB_ZDP_STATUS_SUCCESS) {
-        if (blink_led_task_handle != NULL) {
-            vTaskDelete(blink_led_task_handle);
-            blink_led_task_handle = NULL;
-
-            status_led_off();
-        }
         ESP_LOGI(TAG, "Found traffic light");
         esp_zb_zdo_bind_req_param_t bind_req;
         light_bulb_device_params_t *light = (light_bulb_device_params_t *)malloc(sizeof(light_bulb_device_params_t));
@@ -246,6 +238,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
 
-    xTaskCreate(blink_led_init, "blink_led_task", 4096, NULL, tskIDLE_PRIORITY, &blink_led_task_handle);
+    status_led_init();
+
     xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
 }
