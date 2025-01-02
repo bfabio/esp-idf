@@ -41,8 +41,7 @@
 extern "C" {
 #endif
 
-void blink_led_init();
-
+void status_led_init();
 void status_led_off();
 void status_led_on();
 
